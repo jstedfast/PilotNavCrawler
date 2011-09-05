@@ -452,26 +452,33 @@ namespace PilotNavCrawler
 		
 		public void Crawl ()
 		{
-			if (continents.Peek () == null)
+			if (continents.Count == 0)
 				QueueContinents ();
 			
-			while ((continent = continents.Dequeue ()) != null) {
-				if (countries.Peek () == null)
+			while (continents.Count > 0) {
+				continent = continents.Dequeue ();
+				if (countries.Count == 0)
 					QueueCountries ();
 				
-				while ((country = countries.Dequeue ()) != null) {
-					if (states.Peek () == null)
+				while (countries.Count > 0) {
+					country = countries.Dequeue ();
+					if (states.Count == 0)
 						QueueStates ();
 					
-					while ((state = states.Dequeue ()) != null) {
-						if (pages.Peek () == null)
+					while (states.Count > 0) {
+						state = states.Dequeue ();
+						if (pages.Count == 0)
 							QueuePages ();
 						
-						while ((page = pages.Dequeue ()) != null)
+						while (pages.Count > 0) {
+							page = pages.Dequeue ();
 							ScrapePage ();
+						}
 						
-						while ((airport = airports.Dequeue ()) != null)
+						while (airports.Count > 0) {
+							airport = airports.Dequeue ();
 							ScrapeAirport ();
+						}
 					}
 				}
 			}
