@@ -1,0 +1,7 @@
+PilotNavCrawler
+===============
+
+This is a webcrawler meant for scraping the amazing PilotNav.com
+website and compiling a database of airports and information
+about each of them.
+
