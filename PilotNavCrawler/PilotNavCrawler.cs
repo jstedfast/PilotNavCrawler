@@ -27,19 +27,20 @@
 using System;
 using System.IO;
 using System.Net;
-using System.Xml;
 using System.Threading;
 using System.Collections;
 using System.Collections.Generic;
 
+using HtmlAgilityPack;
 using SQLite;
 
 namespace PilotNavCrawler
 {
 	public class PilotNavCrawler
 	{
-		static string PilotNavBrowseContinents = "http://www.pilotnav.com/browse/Airports";
-		static string ContinentFormat = PilotNavBrowseContinents + "/continent/{0}";
+		static string PilotNavWebSite = "http://www.pilotnav.com";
+		static string BrowseContinents = "http://www.pilotnav.com/browse/Airports";
+		static string ContinentFormat = BrowseContinents + "/continent/{0}";
 		static string CountryFormat = ContinentFormat + "/country/{1}";
 		static string StateFormat = CountryFormat + "/state/{2}";
 		static string PageFormat = StateFormat + "/p/{3}";
@@ -95,17 +96,13 @@ namespace PilotNavCrawler
 			crawler.sqlitedb.CreateTable<Airport> ();
 			
 			if (continent != null) {
-				Console.WriteLine ("Create() queueing continent: {0}", continent);
 				crawler.continents.Enqueue (EncodeContinent (continent));
 				
 				if (country != null) {
-					Console.WriteLine ("Create() queueing country: {0}", country);
 					crawler.countries.Enqueue (EncodeCountry (country));
 					
-					if (state != null) {
-						Console.WriteLine ("Create() queueing state: {0}", state);
+					if (state != null)
 						crawler.states.Enqueue (EncodeState (state));
-					}
 				}
 			}
 			
@@ -130,21 +127,29 @@ namespace PilotNavCrawler
 		List<string> GetChildren (Stream stream, string hrefBase)
 		{
 			List<string> children = hrefBase != null ? new List<string> () : null;
-			XmlReader reader = new XmlTextReader (stream);
+			HtmlDocument doc = new HtmlDocument ();
 			
-			while (reader.Read ()) {
-				if (reader.NodeType == XmlNodeType.Element && reader.Name == "a") {
-					string href = reader.GetAttribute ("href");
+			doc.Load (stream);
+			
+			foreach (HtmlNode link in doc.DocumentNode.SelectNodes ("//a[@href]")) {
+				HtmlAttribute href = link.Attributes["href"];
+				
+				if (href == null || href.Value == null)
+					continue;
+				
+				if (hrefBase != null && href.Value.StartsWith (hrefBase) && href.Value.Length > hrefBase.Length)
+					children.Add (href.Value.Substring (hrefBase.Length));
+				
+				if (href.Value.StartsWith (AirportPath) && href.Value.Length > AirportPath.Length) {
+					string code = href.Value.Substring (AirportPath.Length);
+					if (code.Length > 4) {
+						Console.Error.WriteLine ("is this a valid airport? {0}", code);
+						continue;
+					}
 					
-					if (hrefBase != null && href.StartsWith (hrefBase) && href.Length > hrefBase.Length)
-						children.Add (href.Substring (hrefBase.Length));
-					
-					if (href.StartsWith (AirportPath)) {
-						string code = href.Substring (AirportPath.Length);
-						if (!airports.Contains (code)) {
-							Console.WriteLine ("Queueing airport: {0}", code);
-							airports.Enqueue (code);
-						}
+					if (!airports.Contains (code)) {
+						//Console.WriteLine ("Queueing airport: {0}", code);
+						airports.Enqueue (code);
 					}
 				}
 			}
@@ -157,6 +162,7 @@ namespace PilotNavCrawler
 			HttpWebResponse response;
 			HttpWebRequest request;
 			
+			Console.WriteLine ("Requesting URL: {0}", requestUri);
 			request = (HttpWebRequest) WebRequest.Create (requestUri);
 			request.AllowAutoRedirect = true;
 			
@@ -164,7 +170,8 @@ namespace PilotNavCrawler
 				response = (HttpWebResponse) request.GetResponse ();
 				return GetChildren (response.GetResponseStream (), hrefBase);
 			} catch (Exception ex) {
-				Console.Error.WriteLine ("Failed to fetch {0}: {1}", requestUri, ex.Message);
+				Console.Error.WriteLine ("Failed to fetch {0}: {1}\n{2}", requestUri, ex.Message, ex.StackTrace);
+				Environment.Exit (0);
 				return new List<string> ();
 			}
 		}
@@ -173,10 +180,8 @@ namespace PilotNavCrawler
 		{
 			string hrefBase = string.Format (ContinentFormat, "");
 			
-			foreach (var child in GetChildren (PilotNavBrowseContinents, hrefBase)) {
-				Console.WriteLine ("Queueing continent: {0}", child);
+			foreach (var child in GetChildren (BrowseContinents, hrefBase.Substring (PilotNavWebSite.Length)))
 				continents.Enqueue (child);
-			}
 			
 			Thread.Sleep (1000);
 		}
@@ -186,10 +191,8 @@ namespace PilotNavCrawler
 			string requestUri = string.Format (ContinentFormat, continent);
 			string hrefBase = string.Format (CountryFormat, continent, "");
 			
-			foreach (var child in GetChildren (requestUri, hrefBase)) {
-				Console.WriteLine ("Queueing country: {0}", child);
+			foreach (var child in GetChildren (requestUri, hrefBase.Substring (PilotNavWebSite.Length)))
 				countries.Enqueue (child);
-			}
 			
 			Thread.Sleep (1000);
 		}
@@ -199,10 +202,8 @@ namespace PilotNavCrawler
 			string requestUri = string.Format (CountryFormat, continent, country);
 			string hrefBase = string.Format (StateFormat, continent, country, "");
 			
-			foreach (var child in GetChildren (requestUri, hrefBase)) {
-				Console.WriteLine ("Queueing state: {0}", child);
+			foreach (var child in GetChildren (requestUri, hrefBase.Substring (PilotNavWebSite.Length)))
 				states.Enqueue (child);
-			}
 			
 			Thread.Sleep (1000);
 		}
@@ -212,10 +213,8 @@ namespace PilotNavCrawler
 			string requestUri = string.Format (StateFormat, continent, country, state);
 			string hrefBase = string.Format (PageFormat, continent, country, state, "");
 			
-			foreach (var child in GetChildren (requestUri, hrefBase)) {
-				Console.WriteLine ("Queueing page: {0}", child);
+			foreach (var child in GetChildren (requestUri, hrefBase.Substring (PilotNavWebSite.Length)))
 				pages.Enqueue (child);
-			}
 			
 			Thread.Sleep (1000);
 		}
@@ -227,148 +226,124 @@ namespace PilotNavCrawler
 			GetChildren (requestUri, null);
 		}
 		
-		static bool ScanToElement (XmlTextReader reader, string name, string attr, string value, bool startsWith)
+		static string airport_code_div_class = "code_box code_";
+		static Dictionary<string, string> GetAirportCodes (HtmlDocument doc)
 		{
-			string v;
+			Dictionary<string, string> values = new Dictionary<string, string> ();
 			
-			while (reader.Read ()) {
-				if (reader.NodeType == XmlNodeType.Element && reader.Name == name) {
-					if (attr == null)
-						return true;
+			foreach (HtmlNode div in doc.DocumentNode.SelectNodes ("//div")) {
+				HtmlAttribute attr = div.Attributes["class"];
+				
+				if (attr == null)
+					continue;
+				
+				string @class = attr.Value;
+				
+				if (@class.StartsWith (airport_code_div_class)) {
+					int start = airport_code_div_class.Length;
+					int end = @class.LastIndexOf ('_');
+					string key = @class.Substring (start, end - start);
 					
-					if (!reader.HasAttributes)
-						continue;
+					// the code is the text content
+					values.Add (key.ToUpperInvariant (), div.InnerText.Trim ());
 					
-					if ((v = reader.GetAttribute (attr)) == null)
-						continue;
-					
-					if (value == null)
-						return true;
-					
-					if (startsWith) {
-						if (v.StartsWith (value))
-							return true;
-					} else if (v == value) {
-						return true;
+					if (key == "faa") {
+						// FAA code is always the last
+						break;
 					}
 				}
 			}
 			
-			return false;
+			return values.Count > 0 ? values : null;
 		}
 		
-		static string airport_code_div_class = "code_box code_";
-		static Dictionary<string, string> GetAirportCodes (XmlTextReader reader)
+		static string GetAirportName (HtmlDocument doc)
 		{
-			string @class;
-			
-			// First, scan until we find a <div class=...>
-			if (!ScanToElement (reader, "div", "class", airport_code_div_class, true))
-				return null;
-			
-			Dictionary<string, string> values = new Dictionary<string, string> ();
-			
-			do {
-				if (reader.NodeType != XmlNodeType.Element)
+			foreach (HtmlNode h1 in doc.DocumentNode.SelectNodes ("//table/tr/td/h1")) {
+				if (h1.InnerText == null)
 					continue;
 				
-				if (reader.Name != "div")
-					break;
-				
-				if ((@class = reader.GetAttribute ("class")) == null)
-					break;
-				
-				if (!@class.StartsWith (airport_code_div_class))
-					break;
-				
-				// Okay, now we know it's an airport code...
-				if (reader.HasValue) {
-					string key = @class.Substring (airport_code_div_class.Length);
-					int uscore = key.IndexOf ('_');
-					key = key.Substring (0, uscore);
-					
-					values.Add (key.ToUpperInvariant (), reader.Value.Trim ());
-				}
-			} while (reader.Read ());
-			
-			return values;
-		}
-		
-		static string GetAirportName (XmlTextReader reader)
-		{
-			if (!ScanToElement (reader, "h1", null, null, false))
-				return null;
-			
-			if (!reader.HasValue)
-				return null;
-			
-			return reader.Value.Trim ();
-		}
-		
-		static string[] GetAirportLocation (XmlTextReader reader)
-		{
-			if (!ScanToElement (reader, "h2", null, null, false))
-				return null;
-			
-			if (!reader.HasValue)
-				return null;
-			
-			// The value should be of the form: City, State, Country
-			string[] location = reader.Value.Trim ().Split (new char[] { ',' });
-			
-			if (location.Length == 3)
-				return location;
-			
-			// Didn't get the expected number of tokens...
-			
-			if (location.Length < 3) {
-				// Non-US location: first string is city, second is country.
-				return new string[] { location[0], null, location[1] };
+				return h1.InnerText.Trim ();
 			}
 			
-			// Combine all but the last 2 strings into the city name
-			string city = string.Join (", ", location, 0, location.Length - 2);
-			string country = location[location.Length - 1];
-			string state = location[location.Length - 2];
-			
-			return new string[] { city, state, country };
+			return null;
 		}
 		
-		static Dictionary<string, string> GetAirportKeyValues (XmlTextReader reader)
+		static string[] GetAirportLocation (HtmlDocument doc)
 		{
-			if (!ScanToElement (reader, "td", "class", "dataLabel", false))
-				return null;
+			foreach (HtmlNode h2 in doc.DocumentNode.SelectNodes ("//table/tr/td/h2")) {
+				if (h2.InnerText == null)
+					continue;
+				
+				// The text content should be of the form: City, State, Country
+				string[] location = h2.InnerText.Trim ().Split (new char[] { ',' });
+				
+				if (location.Length == 3)
+					return location;
+				
+				// Didn't get the expected number of tokens...
+				
+				if (location.Length < 3) {
+					// Non-US location: first string is city, second is country.
+					return new string[] { location[0], null, location[1] };
+				}
+				
+				// Combine all but the last 2 strings into the city name
+				string city = string.Join (", ", location, 0, location.Length - 2);
+				string country = location[location.Length - 1];
+				string state = location[location.Length - 2];
+				
+				return new string[] { city, state, country };
+			}
 			
+			return null;
+		}
+		
+		static Dictionary<string, string> GetAirportKeyValues (HtmlDocument doc)
+		{
 			Dictionary<string, string> data = new Dictionary<string, string> ();
+			HtmlNode next;
 			string key;
 			
-			do {
-				if (!reader.HasValue)
+			foreach (HtmlNode td in doc.DocumentNode.SelectNodes ("//td[@class]")) {
+				if (!td.HasAttributes)
 					continue;
 				
-				key = reader.Value.Trim ();
-				if (!key.EndsWith (":"))
+				HtmlAttribute @class = td.Attributes["class"];
+				
+				if (@class == null || @class.Value != "dataLabel")
 					continue;
 				
-				// Get rid of the trailing ':'
+				// the key is the text content of this <td class="dataLabel"> element
+				key = td.InnerText.Trim ();
+				if (!key.EndsWith (":")) {
+					Console.Error.WriteLine ("\tdidn't end with a ':' !!");
+					continue;
+				}
+				
+				// get rid of the trailing ':'
 				key = key.Substring (0, key.Length - 1);
 				
-				// Scan ahead to the next td which contains the value
-				if (!reader.Read () || !ScanToElement (reader, "td", null, null, false))
-					break;
+				// the value is the content of the next <td> element
+				next = td.NextSibling;
+				while (next != null && next.NodeType != HtmlNodeType.Element)
+					next = next.NextSibling;
 				
-				if (!reader.HasValue)
+				if (next.Name != "td") {
+					Console.Error.WriteLine ("\tnext sibling is a <{0}>!!", next.Name);
 					continue;
+				}
 				
-				data.Add (key, reader.Value.Trim ());
-			} while (ScanToElement (reader, "td", "class", "dataLabel", false));
+				if (!data.ContainsKey (key))
+					data.Add (key, next.InnerText.Trim ());
+			}
 			
-			return data;
+			return data.Count > 0 ? data : null;
 		}
 		
 		static Airport ParseAirport (Stream stream)
 		{
-			XmlTextReader reader = new XmlTextReader (stream);
+			HtmlDocument doc = new HtmlDocument ();
 			Dictionary<string, string> values;
 			Airport airport = new Airport ();
 			string[] elevation;
@@ -377,7 +352,9 @@ namespace PilotNavCrawler
 			double d;
 			int i;
 			
-			if ((values = GetAirportCodes (reader)) == null)
+			doc.Load (stream);
+			
+			if ((values = GetAirportCodes (doc)) == null)
 				throw new Exception ("Could not find airport codes.");
 			
 			if (values.TryGetValue ("ICAO", out value))
@@ -387,20 +364,17 @@ namespace PilotNavCrawler
 			if (values.TryGetValue ("FAA", out value))
 				airport.FAA = value;
 			
-			if (!ScanToElement (reader, "table", null, null, false))
-				throw new Exception ("Could not find table element containing the airport Name and Location values.");
-			
-			if ((airport.Name = GetAirportName (reader)) == null)
+			if ((airport.Name = GetAirportName (doc)) == null)
 				throw new Exception ("Failed to scrape airport name.");
 			
-			if ((location = GetAirportLocation (reader)) == null)
+			if ((location = GetAirportLocation (doc)) == null)
 				throw new Exception ("Failed to scrape airport location.");
 			
 			airport.City = location[0];
 			airport.State = location[1];
 			airport.Country = location[2];
 			
-			if ((values = GetAirportKeyValues (reader)) == null)
+			if ((values = GetAirportKeyValues (doc)) == null)
 				throw new Exception ("Could not find key/value information.");
 			
 			if (!values.TryGetValue ("Latitude", out value))
@@ -436,15 +410,40 @@ namespace PilotNavCrawler
 			string requestUri = string.Format (PilotNavAirportFormat, airport);
 			HttpWebResponse response;
 			HttpWebRequest request;
+			Airport record = null;
 			
+			Console.WriteLine ("Requesting URL: {0}", requestUri);
 			request = (HttpWebRequest) WebRequest.Create (requestUri);
 			request.AllowAutoRedirect = true;
 			
 			try {
 				response = (HttpWebResponse) request.GetResponse ();
-				sqlitedb.Insert (ParseAirport (response.GetResponseStream ()));
 			} catch (Exception ex) {
-				Console.Error.WriteLine ("Failed to fetch airport: {0}: {1}", requestUri, ex.Message);
+				Console.Error.WriteLine ("Failed to fetch airport: {0}: {1}\n{2}", requestUri, ex.Message, ex.StackTrace);
+				Environment.Exit (0);
+			}
+			
+			try {
+				Console.WriteLine ("Parsing airport {0}...", airport);
+				record = ParseAirport (response.GetResponseStream ());
+			} catch (Exception ex) {
+				Console.Error.WriteLine ("Failed to parse airport information from {0}", requestUri);
+				Console.Error.WriteLine (ex);
+				Environment.Exit (0);
+			}
+			
+			try {
+				Console.WriteLine ("Adding FAA {0} to the database...", record.FAA);
+				sqlitedb.Insert (record);
+			} catch (Exception ex) {
+				Console.Error.WriteLine ("Failed to add airport to database. URL was {0}", requestUri);
+				Console.Error.WriteLine (ex);
+				
+				var results = sqlitedb.Query<Airport> ("select 1 from Airport where FAA = ?", record.FAA);
+				if (results.Count > 0)
+					Console.Error.WriteLine ("Looks like the airport for FAA={0} already exists.", record.FAA);
+				
+				Environment.Exit (0);
 			}
 			
 			Thread.Sleep (1000);
