@@ -51,7 +51,7 @@ namespace PilotNavCrawler
 		Queue<string> countries = new Queue<string> ();
 		Queue<string> airports = new Queue<string> ();
 		Queue<string> states = new Queue<string> ();
-		Queue<int> pages = new Queue<int> ();
+		Queue<string> pages = new Queue<string> ();
 		string continent, country, state;
 		SQLiteConnection sqlitedb;
 		string page, airport;
@@ -67,7 +67,7 @@ namespace PilotNavCrawler
 		
 		static string EncodeCountry (string country)
 		{
-			string[] words = continent.Split (new char[] { ' ' });
+			string[] words = country.Split (new char[] { ' ' });
 			for (int i = 0; i < words.Length; i++)
 				words[i] = words[i].ToUpperInvariant ();
 			
@@ -76,7 +76,7 @@ namespace PilotNavCrawler
 		
 		static string EncodeState (string state)
 		{
-			string[] words = continent.Split (new char[] { ' ' });
+			string[] words = state.Split (new char[] { ' ' });
 			for (int i = 0; i < words.Length; i++)
 				words[i] = words[i].ToUpperInvariant ();
 			
@@ -85,47 +85,51 @@ namespace PilotNavCrawler
 		
 		private PilotNavCrawler () { }
 		
-		public PilotNavCrawler Create (string filename, string continent, string country, string state)
+		public static PilotNavCrawler Create (string filename, string continent, string country, string state)
 		{
 			if (filename == null)
 				throw new ArgumentNullException ("filename");
 			
 			PilotNavCrawler crawler = new PilotNavCrawler ();
-			crawler.sqlitedb = SQLiteConnection (filename);
+			crawler.sqlitedb = new SQLiteConnection (filename);
 			crawler.sqlitedb.CreateTable<Airport> ();
 			
 			if (continent != null) {
+				Console.WriteLine ("Create() queueing continent: {0}", continent);
 				crawler.continents.Enqueue (EncodeContinent (continent));
 				
 				if (country != null) {
+					Console.WriteLine ("Create() queueing country: {0}", country);
 					crawler.countries.Enqueue (EncodeCountry (country));
 					
-					if (state != null)
+					if (state != null) {
+						Console.WriteLine ("Create() queueing state: {0}", state);
 						crawler.state = EncodeState (state);
+					}
 				}
 			}
 			
 			return crawler;
 		}
 		
-		public PilotNavCrawler Create (string filename, string continent, string country)
+		public static PilotNavCrawler Create (string filename, string continent, string country)
 		{
 			return Create (filename, continent, country, null);
 		}
 		
-		public PilotNavCrawler Create (string filename, string continent)
+		public static PilotNavCrawler Create (string filename, string continent)
 		{
 			return Create (filename, continent, null);
 		}
 		
-		public PilotNavCrawler Create (string filename)
+		public static PilotNavCrawler Create (string filename)
 		{
 			return Create (filename, null);
 		}
 		
 		List<string> GetChildren (Stream stream, string hrefBase)
 		{
-			List<string> children = hrefBase ? new List<string> () : null;
+			List<string> children = hrefBase != null ? new List<string> () : null;
 			XmlReader reader = new XmlTextReader (stream);
 			
 			while (reader.Read ()) {
@@ -157,14 +161,12 @@ namespace PilotNavCrawler
 			request.AllowAutoRedirect = true;
 			
 			try {
-				response = request.GetResponse ();
+				response = (HttpWebResponse) request.GetResponse ();
 				return GetChildren (response.GetResponseStream (), hrefBase);
-			} catch (Exeption ex) {
-				Console.Error.WriteLine ("Failed to fetch {0}", requestUri);
+			} catch (Exception ex) {
+				Console.Error.WriteLine ("Failed to fetch {0}: {1}", requestUri, ex.Message);
 				return new List<string> ();
 			}
-			
-			Thread.Sleep (1000);
 		}
 		
 		void QueueContinents ()
@@ -175,44 +177,52 @@ namespace PilotNavCrawler
 				Console.WriteLine ("Queueing continent: {0}", child);
 				continents.Enqueue (child);
 			}
+			
+			Thread.Sleep (1000);
 		}
 		
 		void QueueCountries ()
 		{
 			string requestUri = string.Format (ContinentFormat, continent);
-			string hrefBase = string.Format (CountryFormat, "");
+			string hrefBase = string.Format (CountryFormat, continent, "");
 			
 			foreach (var child in GetChildren (requestUri, hrefBase)) {
 				Console.WriteLine ("Queueing country: {0}", child);
 				countries.Enqueue (child);
 			}
+			
+			Thread.Sleep (1000);
 		}
 		
 		void QueueStates ()
 		{
 			string requestUri = string.Format (CountryFormat, continent, country);
-			string hrefBase = string.Format (StateFormat, "");
+			string hrefBase = string.Format (StateFormat, continent, country, "");
 			
 			foreach (var child in GetChildren (requestUri, hrefBase)) {
 				Console.WriteLine ("Queueing state: {0}", child);
 				states.Enqueue (child);
 			}
+			
+			Thread.Sleep (1000);
 		}
 		
 		void QueuePages ()
 		{
 			string requestUri = string.Format (StateFormat, continent, country, state);
-			string hrefBase = string.Format (PageFormat, "");
+			string hrefBase = string.Format (PageFormat, continent, country, state, "");
 			
 			foreach (var child in GetChildren (requestUri, hrefBase)) {
 				Console.WriteLine ("Queueing page: {0}", child);
 				pages.Enqueue (child);
 			}
+			
+			Thread.Sleep (1000);
 		}
 		
 		void ScrapePage ()
 		{
-			string requestUri = string.Format (PageFormat, continent, country, state);
+			string requestUri = string.Format (PageFormat, continent, country, state, page);
 			
 			GetChildren (requestUri, null);
 		}
@@ -251,7 +261,6 @@ namespace PilotNavCrawler
 		static Dictionary<string, string> GetAirportCodes (XmlTextReader reader)
 		{
 			string @class;
-			string code;
 			
 			// First, scan until we find a <div class=...>
 			if (!ScanToElement (reader, "div", "class", airport_code_div_class, true))
@@ -359,7 +368,6 @@ namespace PilotNavCrawler
 		
 		static Airport ParseAirport (Stream stream)
 		{
-			AiportParserState state = AirportParserState.ScanningForICAO;
 			XmlTextReader reader = new XmlTextReader (stream);
 			Dictionary<string, string> values;
 			Airport airport = new Airport ();
@@ -428,16 +436,15 @@ namespace PilotNavCrawler
 			string requestUri = string.Format (PilotNavAirportFormat, airport);
 			HttpWebResponse response;
 			HttpWebRequest request;
-			XmlReader reader;
 			
 			request = (HttpWebRequest) WebRequest.Create (requestUri);
 			request.AllowAutoRedirect = true;
 			
 			try {
-				response = request.GetResponse ();
-				sqlitedb.Query<Airport> ().Add (ParseAirport ());
+				response = (HttpWebResponse) request.GetResponse ();
+				sqlitedb.Insert (ParseAirport (response.GetResponseStream ()));
 			} catch (Exception ex) {
-				Console.Error.WriteLine ("Failed to fetch airport: {0}", requestUri);
+				Console.Error.WriteLine ("Failed to fetch airport: {0}: {1}", requestUri, ex.Message);
 			}
 			
 			Thread.Sleep (1000);
@@ -445,22 +452,22 @@ namespace PilotNavCrawler
 		
 		public void Crawl ()
 		{
-			while ((contintent = continents.Dequeue ())) {
+			while ((continent = continents.Dequeue ()) != null) {
 				if (country == null)
 					QueueCountries ();
 				
-				while ((country = countries.Dequeue ())) {
+				while ((country = countries.Dequeue ()) != null) {
 					if (state == null)
 						QueueStates ();
 					
-					while ((state = states.Dequeue ())) {
+					while ((state = states.Dequeue ()) != null) {
 						if (pages == null)
 							QueuePages ();
 						
-						while ((page = pages.Dequeue ()))
+						while ((page = pages.Dequeue ()) != null)
 							ScrapePage ();
 						
-						while ((airport = airports.Dequeue ()))
+						while ((airport = airports.Dequeue ()) != null)
 							ScrapeAirport ();
 					}
 				}
