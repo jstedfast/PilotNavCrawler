@@ -104,7 +104,7 @@ namespace PilotNavCrawler
 					
 					if (state != null) {
 						Console.WriteLine ("Create() queueing state: {0}", state);
-						crawler.state = EncodeState (state);
+						crawler.states.Enqueue (EncodeState (state));
 					}
 				}
 			}
@@ -452,16 +452,19 @@ namespace PilotNavCrawler
 		
 		public void Crawl ()
 		{
+			if (continents.Peek () == null)
+				QueueContinents ();
+			
 			while ((continent = continents.Dequeue ()) != null) {
-				if (country == null)
+				if (countries.Peek () == null)
 					QueueCountries ();
 				
 				while ((country = countries.Dequeue ()) != null) {
-					if (state == null)
+					if (states.Peek () == null)
 						QueueStates ();
 					
 					while ((state = states.Dequeue ()) != null) {
-						if (pages == null)
+						if (pages.Peek () == null)
 							QueuePages ();
 						
 						while ((page = pages.Dequeue ()) != null)
