@@ -43,7 +43,8 @@ namespace PilotNavCrawler
 		static string ContinentFormat = BrowseContinents + "/continent/{0}";
 		static string CountryFormat = ContinentFormat + "/country/{1}";
 		static string StateFormat = CountryFormat + "/state/{2}";
-		static string PageFormat = StateFormat + "/p/{3}";
+		static string USAPageFormat = StateFormat + "/p/{3}";
+		static string PageFormat = CountryFormat + "/p/{2}";
 		
 		static string PilotNavAirportFormat = "http://www.pilotnav.com/airport/{0}";
 		static string AirportPath = "/airport/";
@@ -142,15 +143,9 @@ namespace PilotNavCrawler
 				
 				if (href.Value.StartsWith (AirportPath) && href.Value.Length > AirportPath.Length) {
 					string code = href.Value.Substring (AirportPath.Length);
-					if (code.Length > 4) {
-						Console.Error.WriteLine ("is this a valid airport? {0}", code);
-						continue;
-					}
 					
-					if (!airports.Contains (code)) {
-						//Console.WriteLine ("Queueing airport: {0}", code);
+					if (!airports.Contains (code))
 						airports.Enqueue (code);
-					}
 				}
 			}
 			
@@ -162,7 +157,7 @@ namespace PilotNavCrawler
 			HttpWebResponse response;
 			HttpWebRequest request;
 			
-			Console.WriteLine ("Requesting URL: {0}", requestUri);
+			//Console.WriteLine ("Requesting URL: {0}", requestUri);
 			request = (HttpWebRequest) WebRequest.Create (requestUri);
 			request.AllowAutoRedirect = true;
 			
@@ -171,7 +166,6 @@ namespace PilotNavCrawler
 				return GetChildren (response.GetResponseStream (), hrefBase);
 			} catch (Exception ex) {
 				Console.Error.WriteLine ("Failed to fetch {0}: {1}\n{2}", requestUri, ex.Message, ex.StackTrace);
-				Environment.Exit (0);
 				return new List<string> ();
 			}
 		}
@@ -208,10 +202,18 @@ namespace PilotNavCrawler
 			Thread.Sleep (1000);
 		}
 		
-		void QueuePages ()
+		void QueuePages (bool IsUSA)
 		{
-			string requestUri = string.Format (StateFormat, continent, country, state);
-			string hrefBase = string.Format (PageFormat, continent, country, state, "");
+			string requestUri;
+			string hrefBase;
+			
+			if (IsUSA) {
+				requestUri = string.Format (StateFormat, continent, country, state);
+				hrefBase = string.Format (USAPageFormat, continent, country, state, "");
+			} else {
+				requestUri = string.Format (CountryFormat, continent, country);
+				hrefBase = string.Format (PageFormat, continent, country, "");
+			}
 			
 			foreach (var child in GetChildren (requestUri, hrefBase.Substring (PilotNavWebSite.Length)))
 				pages.Enqueue (child);
@@ -219,9 +221,14 @@ namespace PilotNavCrawler
 			Thread.Sleep (1000);
 		}
 		
-		void ScrapePage ()
+		void ScrapePage (bool IsUSA)
 		{
-			string requestUri = string.Format (PageFormat, continent, country, state, page);
+			string requestUri;
+			
+			if (IsUSA)
+				requestUri = string.Format (USAPageFormat, continent, country, state, page);
+			else
+				requestUri = string.Format (PageFormat, continent, country, page);
 			
 			GetChildren (requestUri, null);
 		}
@@ -269,7 +276,7 @@ namespace PilotNavCrawler
 			return null;
 		}
 		
-		static string[] GetAirportLocation (HtmlDocument doc)
+		static string[] GetAirportLocation (HtmlDocument doc, bool IsUSA)
 		{
 			foreach (HtmlNode h2 in doc.DocumentNode.SelectNodes ("//table/tr/td/h2")) {
 				if (h2.InnerText == null)
@@ -277,21 +284,47 @@ namespace PilotNavCrawler
 				
 				// The text content should be of the form: City, State, Country
 				string[] location = h2.InnerText.Trim ().Split (new char[] { ',' });
+				string country, state, city;
+				int n = 1;
 				
-				if (location.Length == 3)
+				for (int i = 0; i < location.Length; i++)
+					location[i] = location[i].Trim ();
+				
+				switch (location.Length) {
+				case 3: /* City, State, Country */
+					if (!IsUSA) {
+						// No State component for non-US countries.
+						goto default;
+					}
+					
+					/* We're golden. */
 					return location;
-				
-				// Didn't get the expected number of tokens...
-				
-				if (location.Length < 3) {
-					// Non-US location: first string is city, second is country.
-					return new string[] { location[0], null, location[1] };
+				case 2: /* City, Country */
+					country = location[1];
+					city = location[0];
+					state = null;
+					break;
+				case 1: /* Country */
+					country = location[0];
+					state = null;
+					city = null;
+					break;
+				default: // City name must have commas in its name.
+					if (IsUSA) {
+						// If in the USA, the second-to-last component must be the State.
+						n++;
+					}
+					
+					city = string.Join (", ", location, 0, location.Length - n);
+					country = location[location.Length - 1];
+					
+					if (IsUSA)
+						state = location[location.Length - 2];
+					else
+						state = null;
+					
+					break;
 				}
-				
-				// Combine all but the last 2 strings into the city name
-				string city = string.Join (", ", location, 0, location.Length - 2);
-				string country = location[location.Length - 1];
-				string state = location[location.Length - 2];
 				
 				return new string[] { city, state, country };
 			}
@@ -316,10 +349,8 @@ namespace PilotNavCrawler
 				
 				// the key is the text content of this <td class="dataLabel"> element
 				key = td.InnerText.Trim ();
-				if (!key.EndsWith (":")) {
-					Console.Error.WriteLine ("\tdidn't end with a ':' !!");
+				if (!key.EndsWith (":"))
 					continue;
-				}
 				
 				// get rid of the trailing ':'
 				key = key.Substring (0, key.Length - 1);
@@ -329,10 +360,8 @@ namespace PilotNavCrawler
 				while (next != null && next.NodeType != HtmlNodeType.Element)
 					next = next.NextSibling;
 				
-				if (next.Name != "td") {
-					Console.Error.WriteLine ("\tnext sibling is a <{0}>!!", next.Name);
+				if (next.Name != "td")
 					continue;
-				}
 				
 				if (!data.ContainsKey (key))
 					data.Add (key, next.InnerText.Trim ());
@@ -341,7 +370,7 @@ namespace PilotNavCrawler
 			return data.Count > 0 ? data : null;
 		}
 		
-		static Airport ParseAirport (Stream stream)
+		static Airport ParseAirport (Stream stream, bool IsUSA)
 		{
 			HtmlDocument doc = new HtmlDocument ();
 			Dictionary<string, string> values;
@@ -367,7 +396,7 @@ namespace PilotNavCrawler
 			if ((airport.Name = GetAirportName (doc)) == null)
 				throw new Exception ("Failed to scrape airport name.");
 			
-			if ((location = GetAirportLocation (doc)) == null)
+			if ((location = GetAirportLocation (doc, IsUSA)) == null)
 				throw new Exception ("Failed to scrape airport location.");
 			
 			airport.City = location[0];
@@ -405,14 +434,14 @@ namespace PilotNavCrawler
 			return airport;
 		}
 		
-		void ScrapeAirport ()
+		void ScrapeAirport (bool IsUSA)
 		{
 			string requestUri = string.Format (PilotNavAirportFormat, airport);
 			HttpWebResponse response;
 			HttpWebRequest request;
 			Airport record = null;
 			
-			Console.WriteLine ("Requesting URL: {0}", requestUri);
+			//Console.WriteLine ("Requesting URL: {0}", requestUri);
 			request = (HttpWebRequest) WebRequest.Create (requestUri);
 			request.AllowAutoRedirect = true;
 			
@@ -420,20 +449,20 @@ namespace PilotNavCrawler
 				response = (HttpWebResponse) request.GetResponse ();
 			} catch (Exception ex) {
 				Console.Error.WriteLine ("Failed to fetch airport: {0}: {1}\n{2}", requestUri, ex.Message, ex.StackTrace);
-				Environment.Exit (0);
+				return;
 			}
 			
 			try {
-				Console.WriteLine ("Parsing airport {0}...", airport);
-				record = ParseAirport (response.GetResponseStream ());
+				//Console.WriteLine ("Parsing airport {0}...", airport);
+				record = ParseAirport (response.GetResponseStream (), IsUSA);
 			} catch (Exception ex) {
 				Console.Error.WriteLine ("Failed to parse airport information from {0}", requestUri);
 				Console.Error.WriteLine (ex);
-				Environment.Exit (0);
+				return;
 			}
 			
 			try {
-				Console.WriteLine ("Adding FAA {0} to the database...", record.FAA);
+				Console.WriteLine ("Filing airport, {0}, under {1}, {2}, {3}", record.FAA, record.City, record.State, record.Country);
 				sqlitedb.Insert (record);
 			} catch (Exception ex) {
 				Console.Error.WriteLine ("Failed to add airport to database. URL was {0}", requestUri);
@@ -443,7 +472,7 @@ namespace PilotNavCrawler
 				if (results.Count > 0)
 					Console.Error.WriteLine ("Looks like the airport for FAA={0} already exists.", record.FAA);
 				
-				Environment.Exit (0);
+				return;
 			}
 			
 			Thread.Sleep (1000);
@@ -461,22 +490,38 @@ namespace PilotNavCrawler
 				
 				while (countries.Count > 0) {
 					country = countries.Dequeue ();
-					if (states.Count == 0)
-						QueueStates ();
 					
-					while (states.Count > 0) {
-						state = states.Dequeue ();
+					if (country == "UNITED%20STATES") {
+						if (states.Count == 0)
+							QueueStates ();
+						
+						while (states.Count > 0) {
+							state = states.Dequeue ();
+							if (pages.Count == 0)
+								QueuePages (true);
+							
+							while (pages.Count > 0) {
+								page = pages.Dequeue ();
+								ScrapePage (true);
+							}
+							
+							while (airports.Count > 0) {
+								airport = airports.Dequeue ();
+								ScrapeAirport (true);
+							}
+						}
+					} else {
 						if (pages.Count == 0)
-							QueuePages ();
+							QueuePages (false);
 						
 						while (pages.Count > 0) {
 							page = pages.Dequeue ();
-							ScrapePage ();
+							ScrapePage (false);
 						}
 						
 						while (airports.Count > 0) {
 							airport = airports.Dequeue ();
-							ScrapeAirport ();
+							ScrapeAirport (false);
 						}
 					}
 				}
