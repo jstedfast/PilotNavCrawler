@@ -422,14 +422,17 @@ namespace PilotNavCrawler
 			
 			airport.Longitude = d;
 			
-			if (!values.TryGetValue ("Elevation", out value))
-				throw new Exception ("Airport key values did not contain the Elevation.");
-			
-			elevation = value.Split (new char[] { ' ' });
-			if (!int.TryParse (elevation[0], out i))
-				throw new Exception (string.Format ("Could not parse Elevation: {0}", value));
-			
-			airport.Elevation = i;
+			if (values.TryGetValue ("Elevation", out value)) {
+				elevation = value.Split (new char[] { ' ' });
+				if (!int.TryParse (elevation[0], out i)) {
+					Console.Error.WriteLine ("Could not parse Elevation data for {0}: '{1}'", airport.FAA, value);
+				} else {
+					airport.Elevation = i;
+				}
+			} else {
+				// Not critical if we can't get elevation, although it would be nice to have...
+				Console.Error.WriteLine ("Airport {0} did not contain Elevation data.", airport.FAA);
+			}
 			
 			return airport;
 		}
