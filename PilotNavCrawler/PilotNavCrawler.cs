@@ -157,6 +157,7 @@ namespace PilotNavCrawler
 			HttpWebResponse response;
 			HttpWebRequest request;
 			
+		retry:
 			//Console.WriteLine ("Requesting URL: {0}", requestUri);
 			request = (HttpWebRequest) WebRequest.Create (requestUri);
 			request.AllowAutoRedirect = true;
@@ -164,6 +165,8 @@ namespace PilotNavCrawler
 			try {
 				response = (HttpWebResponse) request.GetResponse ();
 				return GetChildren (response.GetResponseStream (), hrefBase);
+			} catch (WebException web) {
+				goto retry;
 			} catch (Exception ex) {
 				Console.Error.WriteLine ("Failed to fetch {0}: {1}\n{2}", requestUri, ex.Message, ex.StackTrace);
 				return new List<string> ();
