@@ -444,12 +444,15 @@ namespace PilotNavCrawler
 			HttpWebRequest request;
 			Airport record = null;
 			
+		retry:
 			//Console.WriteLine ("Requesting URL: {0}", requestUri);
 			request = (HttpWebRequest) WebRequest.Create (requestUri);
 			request.AllowAutoRedirect = true;
 			
 			try {
 				response = (HttpWebResponse) request.GetResponse ();
+			} catch (WebException web) {
+				goto retry;
 			} catch (Exception ex) {
 				Console.Error.WriteLine ("Failed to fetch airport: {0}: {1}\n{2}", requestUri, ex.Message, ex.StackTrace);
 				return;
@@ -458,6 +461,8 @@ namespace PilotNavCrawler
 			try {
 				//Console.WriteLine ("Parsing airport {0}...", airport);
 				record = ParseAirport (response.GetResponseStream (), IsUSA);
+			} catch (WebException web) {
+				goto retry;
 			} catch (Exception ex) {
 				Console.Error.WriteLine ("Failed to parse airport information from {0}", requestUri);
 				Console.Error.WriteLine (ex);
